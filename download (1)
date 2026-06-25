@@ -1,0 +1,994 @@
+import React, { useState, useEffect } from "react";
+import { Edit3, GraduationCap, X, Plus, Calendar, Clock, AlertCircle, HeartPulse, Activity, Trash2, Copy } from "lucide-react";
+import { 
+  EducationItem, 
+  ItemStatus, 
+  STATUS_MAP, 
+  generateTimeIncrements, 
+  calculateMinutes, 
+  formatDuration,
+  getCategoryStyles,
+  EducationHistoryItem
+} from "../types";
+
+// Utility to get today's date in local timezone YYYY-MM-DD
+const getTodayLocalDate = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+interface ItemModalProps {
+  isOpen: boolean;
+  item: EducationItem | null; // Null if adding a new one
+  categories: string[];
+  onAddNewCategory: (name: string) => Promise<boolean>;
+  onDeleteCategory: (name: string) => Promise<boolean>;
+  onSave: (data: { 
+    title: string; 
+    description: string; 
+    understandingCheck: string;
+    category: string; 
+    status: ItemStatus; 
+    progress: number;
+    date: string;
+    startTime: string;
+    endTime: string;
+    history?: EducationHistoryItem[];
+    instructor?: string;
+    isCopy?: boolean;
+  }) => void;
+  onClose: () => void;
+  onDelete?: (item: EducationItem) => void;
+}
+
+export default function ItemModal({ 
+  isOpen, 
+  item, 
+  categories, 
+  onAddNewCategory, 
+  onDeleteCategory,
+  onSave, 
+  onClose,
+  onDelete
+}: ItemModalProps) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [understandingCheck, setUnderstandingCheck] = useState("");
+  const [category, setCategory] = useState("");
+  const [status, setStatus] = useState<ItemStatus>("not_started");
+  const [progress, setProgress] = useState(0);
+  const [instructor, setInstructor] = useState("");
+  
+  // Date & Time states
+  const [date, setDate] = useState("");
+  const [startTime, setStartTime] = useState("10:00");
+  const [endTime, setEndTime] = useState("11:00");
+
+  // History sessions list state
+  const [history, setHistory] = useState<EducationHistoryItem[]>([]);
+  const [isAddingHistory, setIsAddingHistory] = useState(false);
+  const [editingHistoryId, setEditingHistoryId] = useState<string | null>(null);
+  const [historyDate, setHistoryDate] = useState("");
+  const [historyStartTime, setHistoryStartTime] = useState("10:00");
+  const [historyEndTime, setHistoryEndTime] = useState("11:00");
+  const [historyDescription, setHistoryDescription] = useState("");
+  const [historyUnderstandingCheck, setHistoryUnderstandingCheck] = useState("");
+  const [historyInstructor, setHistoryInstructor] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Inline Category creator state
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryError, setCategoryError] = useState("");
+  
+  const [error, setError] = useState("");
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+
+  const timeOptions = generateTimeIncrements();
+
+  // Sync inputs with item when editing or resetting when adding new
+  useEffect(() => {
+    if (isOpen) {
+      if (item) {
+        setTitle(item.title || "");
+        setDescription(item.description || "");
+        setUnderstandingCheck(item.understandingCheck || "");
+        setCategory(item.category || "");
+        setStatus(item.status || "not_started");
+        setProgress(item.progress || 0);
+        setDate(item.date || getTodayLocalDate());
+        setStartTime(item.startTime || "10:00");
+        setEndTime(item.endTime || "11:00");
+        setHistory(item.history || []);
+        setInstructor(item.instructor || "");
+      } else {
+        setTitle("");
+        setDescription("");
+        setUnderstandingCheck("");
+        setCategory(categories[0] || "臨床医学");
+        setStatus("not_started");
+        setProgress(0);
+        setDate(getTodayLocalDate());
+        setStartTime("10:00");
+        setEndTime("11:00");
+        setHistory([]);
+        setInstructor("");
+      }
+      setNewCategoryName("");
+      setCategoryError("");
+      setError("");
+      setIsCreatingCategory(false);
+      setIsAddingHistory(false);
+      setEditingHistoryId(null);
+      setDeleteConfirmId(null);
+      setHistoryDate(getTodayLocalDate());
+      setHistoryStartTime("10:00");
+      setHistoryEndTime("11:00");
+      setHistoryDescription("");
+      setHistoryUnderstandingCheck("");
+      setHistoryInstructor("");
+      setHistoryError("");
+    }
+  }, [isOpen, item, categories]);
+
+  // Handle automatic synchronization between status and progress
+  const handleProgressChange = (val: number) => {
+    setProgress(val);
+    if (val === 100) {
+      setStatus("completed");
+    } else if (val === 0) {
+      setStatus("not_started");
+    } else {
+      setStatus("in_progress");
+    }
+  };
+
+  const handleStatusChange = (newStatus: ItemStatus) => {
+    setStatus(newStatus);
+    if (newStatus === "completed") {
+      setProgress(100);
+    } else if (newStatus === "not_started") {
+      setProgress(0);
+    } else if (newStatus === "in_progress" && (progress === 0 || progress === 100)) {
+      setProgress(50); // Default to mid point
+    }
+  };
+
+  // Create new category inline
+  const handleAddCategorySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = newCategoryName.trim();
+    if (!cleanName) return;
+
+    if (categories.some(cat => cat.toLowerCase() === cleanName.toLowerCase())) {
+      setCategoryError("そのカテゴリーは既に存在します");
+      return;
+    }
+
+    try {
+      const success = await onAddNewCategory(cleanName);
+      if (success) {
+        setCategory(cleanName);
+        setNewCategoryName("");
+        setCategoryError("");
+        setIsCreatingCategory(false);
+      } else {
+        setCategoryError("カテゴリーの作成に失敗しました");
+      }
+    } catch (err) {
+      setCategoryError("エラーが発生しました");
+    }
+  };
+
+  const computedDurationMinutes = calculateMinutes(startTime, endTime);
+  const formattedDuration = formatDuration(computedDurationMinutes);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) {
+      setError("教育タイトルを入力してください");
+      return;
+    }
+    if (!category) {
+      setError("カテゴリーを選択または追加してください");
+      return;
+    }
+    if (!date) {
+      setError("活動日（日付）を入力してください");
+      return;
+    }
+    if (computedDurationMinutes <= 0) {
+      setError("終了時間は開始時間よりも後に設定してください");
+      return;
+    }
+
+    onSave({
+      title: title.trim(),
+      description: description.trim(),
+      understandingCheck: understandingCheck.trim(),
+      category: category,
+      status: status,
+      progress: progress,
+      date: date,
+      startTime: startTime,
+      endTime: endTime,
+      history: history,
+      instructor: instructor.trim()
+    });
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto" id="item-form-modal">
+      {/* Backdrop overlay */}
+      <div
+        onClick={onClose}
+        className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity duration-300"
+      />
+
+      {/* Modal content container */}
+      <div
+        className="relative bg-white rounded-3xl border border-slate-100 max-w-6xl w-full shadow-2xl p-6 md:p-8 z-10 my-8 overflow-hidden animate-[fadeIn_0.2s_ease-out]"
+      >
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                {item ? (
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                    <Edit3 className="w-5 h-5" />
+                  </div>
+                ) : (
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                    <HeartPulse className="w-5 h-5 animate-pulse" />
+                  </div>
+                )}
+                <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                  {item ? "研修・指導項目を編集" : "研修・指導項目を追加"}
+                </h3>
+              </div>
+
+              {/* 進捗状況（ステータス） */}
+              <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+                {Object.keys(STATUS_MAP).map((statusKey) => {
+                  const key = statusKey as ItemStatus;
+                  const selected = status === key;
+                  const info = STATUS_MAP[key];
+                  return (
+                    <button
+                      type="button"
+                      key={key}
+                      onClick={() => handleStatusChange(key)}
+                      className={`px-3 py-1 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                        selected
+                          ? `${info.bgColor} ${info.color} shadow-xs`
+                          : "text-slate-500 hover:text-slate-700 bg-transparent"
+                      }`}
+                      id={`status-opt-${key}`}
+                    >
+                      {info.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer self-end sm:self-auto"
+              id="close-modal-btn"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="max-h-[78vh] overflow-y-auto pr-1">
+            {error && (
+              <div className="p-3.5 bg-rose-50 border border-rose-100 text-rose-600 text-xs rounded-xl font-bold flex items-center gap-2 mb-4">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              {/* Left Column: Basic Training Details */}
+              <div className="lg:col-span-6 space-y-5">
+                <div className="bg-slate-50/50 p-5 rounded-2xl border border-slate-150 space-y-4">
+                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                    <GraduationCap className="w-4 h-4 text-blue-600" />
+                    <span>基本指導・研修情報</span>
+                  </h4>
+
+                  {/* Title */}
+                  <div className="space-y-1">
+                    <label htmlFor="title" className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                      指導・研修タイトル <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="title"
+                      value={title}
+                      onChange={(e) => {
+                        setTitle(e.target.value);
+                        if (error) setError("");
+                      }}
+                      placeholder="例: 人工呼吸器の設定と離脱手順の指導、中心静脈採血の技術演習"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-250 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50 font-semibold text-slate-800 transition-all text-xs placeholder:text-slate-400 shadow-xs"
+                      required
+                      maxLength={100}
+                    />
+                  </div>
+
+                  {/* Instructor */}
+                  <div className="space-y-1">
+                    <label htmlFor="instructor" className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                      教育担当者名
+                    </label>
+                    <input
+                      type="text"
+                      id="instructor"
+                      value={instructor}
+                      onChange={(e) => setInstructor(e.target.value)}
+                      placeholder="例: 山田 太郎、鈴木 看護師長"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-250 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50 font-semibold text-slate-800 transition-all text-xs placeholder:text-slate-400 shadow-xs"
+                      maxLength={50}
+                    />
+                  </div>
+
+                  {/* Categories */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
+                        研修カテゴリー <span className="text-rose-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingCategory(!isCreatingCategory);
+                          setCategoryError("");
+                        }}
+                        className="text-[11px] text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>新規カテゴリー追加</span>
+                      </button>
+                    </div>
+
+                    {/* Inline category creation form */}
+                    {isCreatingCategory && (
+                      <div className="bg-white border border-slate-200 p-3 rounded-xl mb-2 transition-all">
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="例: 臨床医学、看護技術、医療安全"
+                            value={newCategoryName}
+                            onChange={(e) => {
+                              setNewCategoryName(e.target.value);
+                              if (categoryError) setCategoryError("");
+                            }}
+                            className="flex-1 px-3 py-1.5 text-xs rounded-xl border border-slate-250 bg-white font-semibold text-slate-700"
+                            maxLength={20}
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddCategorySubmit}
+                            className="px-3 py-1.5 bg-blue-600 text-white font-bold rounded-xl text-xs hover:bg-blue-700 transition-colors cursor-pointer"
+                          >
+                            作成
+                          </button>
+                        </div>
+                        {categoryError && (
+                          <span className="text-[10px] text-rose-500 mt-1 font-semibold block">{categoryError}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Category chip selectors with inline delete */}
+                    {categories.length === 0 ? (
+                      <div className="text-[11px] text-slate-400 py-3 px-4 bg-white text-center rounded-xl border border-slate-150 border-dashed">
+                        カテゴリーがありません。「新規カテゴリー追加」から追加してください。
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5 p-2 bg-white rounded-xl border border-slate-200 max-h-28 overflow-y-auto">
+                        {categories.map((catKey) => {
+                          const selected = category === catKey;
+                          const style = getCategoryStyles(catKey);
+                          return (
+                            <div key={catKey} className="relative flex items-center">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCategory(catKey);
+                                  setError("");
+                                }}
+                                className={`pl-2.5 pr-6 py-1 text-[11px] font-black rounded-lg border transition-all cursor-pointer ${
+                                  selected
+                                    ? `${style.bgColor} ${style.color} ${style.borderColor} ring-2 ring-blue-500/20`
+                                    : "border-slate-200 bg-slate-50/50 text-slate-600 hover:border-slate-300 hover:bg-slate-100/50"
+                                }`}
+                                id={`category-opt-${catKey.replace(/\s+/g, '-')}`}
+                              >
+                                {catKey}
+                              </button>
+                              <button
+                                type="button"
+                                title={`${catKey}カテゴリーを削除`}
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const success = await onDeleteCategory(catKey);
+                                  if (success && category === catKey) {
+                                    setCategory("");
+                                  }
+                                }}
+                                className="absolute right-1 w-3.5 h-3.5 rounded-full flex items-center justify-center bg-slate-200/40 hover:bg-rose-500 text-slate-400 hover:text-white transition-all text-[8px] font-bold cursor-pointer"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Date and times */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 bg-white p-3.5 rounded-xl border border-slate-200">
+                    {/* Date */}
+                    <div className="space-y-1">
+                      <label htmlFor="date" className="text-[10px] font-black text-slate-450 uppercase tracking-wider flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>実施日 <span className="text-rose-500">*</span></span>
+                      </label>
+                      <input
+                        type="date"
+                        id="date"
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white outline-none focus:border-blue-500 font-semibold text-slate-700 text-xs transition-all"
+                        required
+                      />
+                    </div>
+
+                    {/* Total Duration Info Display */}
+                    <div className="space-y-1 flex flex-col justify-end">
+                      <div className="bg-blue-50/20 border border-blue-100/50 rounded-xl p-2 flex items-center gap-2">
+                        <Clock className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                        <div>
+                          <div className="text-[8px] text-slate-400 font-bold uppercase tracking-wider">活動時間</div>
+                          <div className="text-[11px] font-bold text-blue-800">{computedDurationMinutes > 0 ? formattedDuration : "時間設定エラー"}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Start Time Select */}
+                    <div className="space-y-1">
+                      <label htmlFor="startTime" className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                        開始時間
+                      </label>
+                      <select
+                        id="startTime"
+                        value={startTime}
+                        onChange={(e) => {
+                          setStartTime(e.target.value);
+                          if (error) setError("");
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white outline-none focus:border-blue-500 font-semibold text-slate-700 text-xs transition-all"
+                      >
+                        {timeOptions.map((t) => (
+                          <option key={`start-${t}`} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* End Time Select */}
+                    <div className="space-y-1">
+                      <label htmlFor="endTime" className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                        終了時間
+                      </label>
+                      <select
+                        id="endTime"
+                        value={endTime}
+                        onChange={(e) => {
+                          setEndTime(e.target.value);
+                          if (error) setError("");
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white outline-none focus:border-blue-500 font-semibold text-slate-700 text-xs transition-all"
+                      >
+                        {timeOptions.map((t) => (
+                          <option key={`end-${t}`} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Description (Education Content) */}
+                <div className="space-y-1 bg-slate-50/50 p-4.5 rounded-2xl border border-slate-150">
+                  <label htmlFor="description" className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                    教育内容 <span className="text-slate-400 text-[10px] font-normal">(研修の具体的な実施項目やテーマ)</span>
+                  </label>
+                  <textarea
+                    id="description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="実施した指導内容、治療や看護の技術的要点、参照したガイドラインや手順書について詳細に入力してください..."
+                    className="w-full h-40 px-3.5 py-2.5 rounded-xl border border-slate-250 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50 font-medium text-slate-700 text-xs transition-all placeholder:text-slate-400 resize-none shadow-xs"
+                    maxLength={1200}
+                  />
+                </div>
+
+                {/* Understanding Check */}
+                <div className="space-y-1 bg-slate-50/50 p-4.5 rounded-2xl border border-slate-150">
+                  <label htmlFor="understandingCheck" className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                    理解度チェック <span className="text-slate-400 text-[10px] font-normal">(受講者の到達度、質疑応答の内容、課題点)</span>
+                  </label>
+                  <textarea
+                    id="understandingCheck"
+                    value={understandingCheck}
+                    onChange={(e) => setUnderstandingCheck(e.target.value)}
+                    placeholder="受講者・実習生の理解の程度、実施できた看護技術の手順、見つかった課題点や次回指導への申し送り事項を入力してください..."
+                    className="w-full h-40 px-3.5 py-2.5 rounded-xl border border-slate-250 bg-white outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50 font-medium text-slate-700 text-xs transition-all placeholder:text-slate-400 resize-none shadow-xs"
+                    maxLength={1200}
+                  />
+                </div>
+              </div>
+
+              {/* Right Column: Repeated Sessions History Log */}
+              <div className="lg:col-span-6 space-y-4 pt-6 lg:pt-0 lg:pl-6 border-t lg:border-t-0 lg:border-l border-slate-150">
+                <div className="flex justify-between items-center bg-slate-50 p-3 rounded-2xl border border-slate-150">
+                  <div className="space-y-0.5">
+                    <h4 className="text-sm font-black text-slate-800 tracking-tight flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-blue-600 animate-pulse" />
+                      <span>追加の指導・研修履歴 ({history.length}件)</span>
+                    </h4>
+                    <p className="text-slate-500 text-[10px] font-bold">繰り返し指導した際に、追加で日付・内容・評価を蓄積できます。</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editingHistoryId) {
+                        setEditingHistoryId(null);
+                      }
+                      setIsAddingHistory(!isAddingHistory);
+                      setHistoryDate(new Date().toISOString().split("T")[0]);
+                      setHistoryStartTime("10:00");
+                      setHistoryEndTime("11:00");
+                      setHistoryDescription("");
+                      setHistoryUnderstandingCheck("");
+                      setHistoryInstructor(instructor || ""); // Default to current main instructor
+                      setHistoryError("");
+                    }}
+                    className="text-xs bg-white hover:bg-blue-50 text-blue-700 px-3 py-2 rounded-xl font-black transition-all flex items-center gap-1 border border-slate-200 hover:border-blue-350 shadow-xs cursor-pointer"
+                  >
+                    {isAddingHistory && !editingHistoryId ? "閉じる" : "＋ 履歴を追加"}
+                  </button>
+                </div>
+
+                {/* Form Anchor for Smooth Scrolling */}
+                <div id="history-form-anchor" />
+
+                {/* Form to Add or Edit History Entry */}
+                {isAddingHistory && (
+                  <div className="bg-blue-50/20 p-5 rounded-2xl border border-blue-200/60 space-y-4 animate-[fadeIn_0.2s_ease-out]">
+                    <h5 className="text-xs font-black text-blue-800 uppercase tracking-widest flex items-center gap-1.5">
+                      <span>{editingHistoryId ? "📝 指導・研修履歴の編集" : "📝 新規指導・研修履歴の入力"}</span>
+                    </h5>
+                    
+                    {historyError && (
+                      <div className="text-[11px] text-rose-600 font-bold bg-rose-50 p-2.5 rounded-xl border border-rose-100 flex items-center gap-1.5">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        <span>{historyError}</span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-500 block">実施日 *</label>
+                        <input
+                          type="date"
+                          value={historyDate}
+                          onChange={(e) => setHistoryDate(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-250 bg-white font-semibold text-slate-700 text-xs outline-none focus:border-blue-500"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1 flex flex-col justify-end">
+                        <div className="text-[10px] text-slate-400 font-bold">追加の教育時間</div>
+                        <div className="text-xs font-black text-blue-700 bg-white px-3 py-2 rounded-xl border border-blue-100 flex items-center gap-1.5 shadow-2xs">
+                          <Clock className="w-3.5 h-3.5 text-blue-600" />
+                          <span>
+                            {calculateMinutes(historyStartTime, historyEndTime) > 0 
+                              ? formatDuration(calculateMinutes(historyStartTime, historyEndTime)) 
+                              : "時間設定エラー"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-500 block">開始時間</label>
+                        <select
+                          value={historyStartTime}
+                          onChange={(e) => setHistoryStartTime(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-250 bg-white font-semibold text-slate-700 text-xs animate-none"
+                        >
+                          {timeOptions.map((t) => (
+                            <option key={`hist-start-${t}`} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-500 block">終了時間</label>
+                        <select
+                          value={historyEndTime}
+                          onChange={(e) => setHistoryEndTime(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-250 bg-white font-semibold text-slate-700 text-xs animate-none"
+                        >
+                          {timeOptions.map((t) => (
+                            <option key={`hist-end-${t}`} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 block">教育担当者名</label>
+                      <input
+                        type="text"
+                        value={historyInstructor}
+                        onChange={(e) => setHistoryInstructor(e.target.value)}
+                        placeholder="例: 山田 太郎、鈴木 看護師長"
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-250 bg-white font-semibold text-slate-700 text-xs outline-none focus:border-blue-500 transition-all shadow-xs"
+                        maxLength={50}
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 block">追加の指導・研修内容 *</label>
+                      <textarea
+                        value={historyDescription}
+                        onChange={(e) => setHistoryDescription(e.target.value)}
+                        placeholder="例: 指導書2章の実践演習を再度実施。模擬機器を用いたアラーム対応手順を徹底的に確認した..."
+                        className="w-full h-28 px-3.5 py-2.5 rounded-xl border border-slate-250 bg-white outline-none focus:border-blue-500 font-medium text-slate-700 text-xs placeholder:text-slate-400 resize-none shadow-xs"
+                        maxLength={1000}
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-500 block">理解度・指導の振り返り</label>
+                      <textarea
+                        value={historyUnderstandingCheck}
+                        onChange={(e) => setHistoryUnderstandingCheck(e.target.value)}
+                        placeholder="例: アラームへの即時対応は完璧にこなせるようになった。一部パラメーター設定に迷いが見られたので、次回もフォローが必要..."
+                        className="w-full h-28 px-3.5 py-2.5 rounded-xl border border-slate-250 bg-white outline-none focus:border-blue-500 font-medium text-slate-700 text-xs placeholder:text-slate-400 resize-none shadow-xs"
+                        maxLength={1000}
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2.5 pt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingHistory(false);
+                          setEditingHistoryId(null);
+                          setHistoryDate(new Date().toISOString().split("T")[0]);
+                          setHistoryStartTime("10:00");
+                          setHistoryEndTime("11:00");
+                          setHistoryDescription("");
+                          setHistoryUnderstandingCheck("");
+                          setHistoryInstructor("");
+                          setHistoryError("");
+                        }}
+                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                      >
+                        キャンセル
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!historyDate) {
+                            setHistoryError("実施日を入力してください。");
+                            return;
+                          }
+                          if (calculateMinutes(historyStartTime, historyEndTime) <= 0) {
+                            setHistoryError("終了時間は開始時間よりも後に設定してください。");
+                            return;
+                          }
+                          if (!historyDescription.trim()) {
+                            setHistoryError("追加の指導・研修内容を入力してください。");
+                            return;
+                          }
+                          
+                          if (editingHistoryId) {
+                            // Editing existing entry
+                            setHistory(history.map(h => h.id === editingHistoryId ? {
+                              ...h,
+                              date: historyDate,
+                              startTime: historyStartTime,
+                              endTime: historyEndTime,
+                              description: historyDescription.trim(),
+                              understandingCheck: historyUnderstandingCheck.trim(),
+                              instructor: historyInstructor.trim()
+                            } : h));
+                            setEditingHistoryId(null);
+                          } else {
+                            // Adding a new entry
+                            const newEntry = {
+                              id: Date.now().toString(),
+                              date: historyDate,
+                              startTime: historyStartTime,
+                              endTime: historyEndTime,
+                              description: historyDescription.trim(),
+                              understandingCheck: historyUnderstandingCheck.trim(),
+                              instructor: historyInstructor.trim()
+                            };
+                            setHistory([newEntry, ...history]);
+                          }
+                          
+                          setIsAddingHistory(false);
+                          setHistoryDate(new Date().toISOString().split("T")[0]);
+                          setHistoryStartTime("10:00");
+                          setHistoryEndTime("11:00");
+                          setHistoryDescription("");
+                          setHistoryUnderstandingCheck("");
+                          setHistoryInstructor("");
+                          setHistoryError("");
+                        }}
+                        className="px-4.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-xl text-xs transition-all shadow-md shadow-blue-600/10 cursor-pointer"
+                      >
+                        {editingHistoryId ? "変更を保存する" : "この研修記録を追加"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* History Timeline/List */}
+                {history.length > 0 ? (
+                  <div className="relative border-l border-blue-200 pl-4 ml-2.5 space-y-4">
+                    {history.map((hist, index) => {
+                      const histMinutes = calculateMinutes(hist.startTime, hist.endTime);
+                      const histIdx = history.length - index;
+                      const isCurrentlyEditing = editingHistoryId === hist.id;
+                      const isConfirmingDelete = deleteConfirmId === hist.id;
+
+                      return (
+                        <div 
+                          key={hist.id} 
+                          onClick={() => {
+                            if (isConfirmingDelete) return;
+                            setEditingHistoryId(hist.id);
+                            setHistoryDate(hist.date);
+                            setHistoryStartTime(hist.startTime);
+                            setHistoryEndTime(hist.endTime);
+                            setHistoryDescription(hist.description);
+                            setHistoryUnderstandingCheck(hist.understandingCheck || "");
+                            setHistoryInstructor(hist.instructor || "");
+                            setHistoryError("");
+                            setIsAddingHistory(true);
+                            const el = document.getElementById("history-form-anchor");
+                            if (el) el.scrollIntoView({ behavior: "smooth" });
+                          }}
+                          className={`relative p-4 rounded-2xl border transition-all cursor-pointer group/hist-card select-none space-y-3 ${
+                            isCurrentlyEditing 
+                              ? "bg-blue-50/40 border-blue-300 ring-2 ring-blue-500/20" 
+                              : "bg-slate-50/50 border-slate-150 hover:bg-slate-100/70 hover:border-slate-350 shadow-2xs"
+                          }`}
+                          title="クリックしてこの指導履歴を編集"
+                        >
+                          {/* Timeline dot marker */}
+                          <span className={`absolute -left-[21px] top-5.5 w-2.5 h-2.5 rounded-full ring-4 ring-white transition-all ${
+                            isCurrentlyEditing ? "bg-blue-600 scale-125" : "bg-blue-500"
+                          }`} />
+                          
+                          {/* If confirming delete, show confirmation dialog */}
+                          {isConfirmingDelete ? (
+                            <div 
+                              className="bg-rose-50/90 border border-rose-200 p-3.5 rounded-xl flex flex-col gap-2.5 animate-[fadeIn_0.15s_ease-out]" 
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="flex items-center gap-1.5 text-rose-700 text-xs font-black">
+                                <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600 animate-bounce" />
+                                <span>追加指導 #{histIdx} の履歴を削除してもよろしいですか？</span>
+                              </div>
+                              <div className="flex gap-2 justify-end">
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteConfirmId(null)}
+                                  className="px-3 py-1 bg-white border border-slate-250 hover:bg-slate-55 text-slate-600 font-bold rounded-lg text-[10px] cursor-pointer"
+                                >
+                                  キャンセル
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHistory(history.filter(h => h.id !== hist.id));
+                                    if (editingHistoryId === hist.id) {
+                                      setEditingHistoryId(null);
+                                      setIsAddingHistory(false);
+                                    }
+                                    setDeleteConfirmId(null);
+                                  }}
+                                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-lg text-[10px] cursor-pointer shadow-xs"
+                                >
+                                  はい、削除する
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-[10px] bg-blue-600 text-white font-black px-2 py-0.5 rounded-md uppercase tracking-wider">
+                                    追加指導 #{histIdx}
+                                  </span>
+                                  <span className="text-xs font-black text-slate-700 flex items-center gap-1">
+                                    <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                                    <span>{hist.date}</span>
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 font-extrabold bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
+                                    {hist.startTime}〜{hist.endTime} ({formatDuration(histMinutes)})
+                                  </span>
+                                  {hist.instructor && (
+                                    <span className="text-[10px] text-blue-750 font-extrabold bg-blue-100/70 px-2 py-0.5 rounded-md border border-blue-200/40">
+                                      担当: {hist.instructor}
+                                    </span>
+                                  )}
+                                </div>
+                                
+                                <div className="flex items-center gap-2 opacity-80 group-hover/hist-card:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingHistoryId(hist.id);
+                                      setHistoryDate(hist.date);
+                                      setHistoryStartTime(hist.startTime);
+                                      setHistoryEndTime(hist.endTime);
+                                      setHistoryDescription(hist.description);
+                                      setHistoryUnderstandingCheck(hist.understandingCheck || "");
+                                      setHistoryInstructor(hist.instructor || "");
+                                      setHistoryError("");
+                                      setIsAddingHistory(true);
+                                      const el = document.getElementById("history-form-anchor");
+                                      if (el) el.scrollIntoView({ behavior: "smooth" });
+                                    }}
+                                    className="text-[10px] font-black text-blue-600 hover:text-blue-800 px-2.5 py-1 rounded-lg hover:bg-blue-50 transition-all cursor-pointer border border-transparent hover:border-blue-200"
+                                  >
+                                    編集
+                                  </button>
+                                  
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setDeleteConfirmId(hist.id);
+                                    }}
+                                    className="text-[10px] font-black text-rose-500 hover:text-rose-700 px-2.5 py-1 rounded-lg hover:bg-rose-50 transition-all cursor-pointer border border-transparent hover:border-rose-200"
+                                  >
+                                    削除
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2 text-xs">
+                                <div className="bg-white p-3 rounded-xl border border-slate-200/65 group-hover/hist-card:border-slate-300 transition-all">
+                                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">
+                                    指導・研修内容
+                                  </span>
+                                  <p className="text-slate-800 font-semibold whitespace-pre-wrap leading-relaxed">{hist.description}</p>
+                                </div>
+                                {hist.understandingCheck && (
+                                  <div className="bg-blue-50/15 p-3 rounded-xl border border-blue-100/30 group-hover/hist-card:border-blue-200/30 transition-all">
+                                    <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest block mb-0.5">
+                                      理解度・指導の振り返り
+                                    </span>
+                                    <p className="text-slate-900 font-semibold whitespace-pre-wrap leading-relaxed">{hist.understandingCheck}</p>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-right text-[9px] text-slate-400 font-black opacity-0 group-hover/hist-card:opacity-100 transition-opacity">
+                                💡 クリックしてこの指導履歴を編集
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 px-4 bg-slate-50/50 border border-slate-150 border-dashed rounded-2xl text-xs text-slate-400 font-black">
+                    追加の実施履歴はありません。
+                    <br />
+                    繰り返し指導を行った際は、右上の「＋ 履歴を追加」ボタンから記録を追加してください。
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-col sm:flex-row sm:justify-between items-stretch sm:items-center gap-3 pt-6 mt-6 border-t border-slate-100">
+              <div>
+                {item && onDelete && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDelete(item);
+                      onClose();
+                    }}
+                    className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-2xl transition-all text-xs cursor-pointer border border-rose-150"
+                    id="modal-delete-btn"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>この項目を削除</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2.5 justify-end">
+                {item && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (!title.trim()) {
+                        setError("教育タイトルを入力してください");
+                        return;
+                      }
+                      if (!category) {
+                        setError("カテゴリーを選択または追加してください");
+                        return;
+                      }
+                      if (!date) {
+                        setError("活動日（日付）を入力してください");
+                        return;
+                      }
+                      if (computedDurationMinutes <= 0) {
+                        setError("終了時間は開始時間よりも後に設定してください");
+                        return;
+                      }
+                      onSave({
+                        title: `${title.trim()} (コピー)`,
+                        description: description.trim(),
+                        understandingCheck: understandingCheck.trim(),
+                        category: category,
+                        status: status,
+                        progress: progress,
+                        date: date,
+                        startTime: startTime,
+                        endTime: endTime,
+                        history: history,
+                        instructor: instructor.trim(),
+                        isCopy: true
+                      });
+                    }}
+                    className="flex items-center gap-1.5 px-4.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold rounded-2xl transition-all text-xs cursor-pointer border border-indigo-150 shadow-xs"
+                    id="modal-copy-btn"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>コピーを保存</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-2xl transition-all text-xs cursor-pointer"
+                  id="modal-cancel-btn"
+                >
+                  キャンセル
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl shadow-lg shadow-blue-600/15 hover:shadow-blue-700/20 hover:scale-[1.01] active:scale-[0.99] transition-all text-xs cursor-pointer"
+                  id="modal-submit-btn"
+                >
+                  {item ? "変更を保存" : "追加する"}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+  );
+}

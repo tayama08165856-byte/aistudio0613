@@ -1,0 +1,159 @@
+import * as XLSX from "xlsx";
+import { EducationItem, ItemStatus } from "../types";
+
+export function exportToExcel(items: EducationItem[], filename = "CE_Education_Items.xlsx") {
+  const rows = items.map(item => ({
+    "項目タイトル": item.title || "",
+    "カテゴリー": item.category || "その他",
+    "実施日": item.date || "",
+    "開始時間": item.startTime || "",
+    "終了時間": item.endTime || "",
+    "進捗状況": item.status === "completed" ? "完了" : item.status === "in_progress" ? "進行中" : "未着手",
+    "教育担当者名": item.instructor || "",
+    "研修・指導内容": item.description || "",
+    "理解度・振り返り": item.understandingCheck || "",
+    "登録日時": item.createdAt ? new Date(item.createdAt).toLocaleString("ja-JP") : "",
+    "最終更新日時": item.updatedAt ? new Date(item.updatedAt).toLocaleString("ja-JP") : ""
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "研修・指導項目");
+  XLSX.writeFile(workbook, filename);
+}
+
+export function importFromExcel(file: File): Promise<Partial<EducationItem>[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        if (!data) {
+          reject(new Error("ファイルの読み込みに失敗しました。"));
+          return;
+        }
+        
+        // Read workbook
+        const workbook = XLSX.read(data, { type: "binary" });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const json = XLSX.utils.sheet_to_json<any>(worksheet);
+
+        if (!json || json.length === 0) {
+          reject(new Error("インポートするデータが見つかりませんでした。エクセルシートが空か、無効な形式です。"));
+          return;
+        }
+
+        const items: Partial<EducationItem>[] = json.map((row: any) => {
+          // Flexible key lookup helper
+          const getVal = (possibleKeys: string[]): string => {
+            for (const k of possibleKeys) {
+              if (row[k] !== undefined && row[k] !== null) {
+                return String(row[k]).trim();
+              }
+            }
+            return "";
+          };
+
+          const title = getVal(["項目タイトル", "項目名", "タイトル", "Title", "研修項目", "指導項目"]);
+          const category = getVal(["カテゴリー", "分類", "Category", "ジャンル"]) || "その他";
+          
+          // Flexible date handling
+          let dateVal = getVal(["実施日", "日付", "実施日付", "Date", "年月日"]);
+          
+          if (dateVal && /^\d+$/.test(dateVal)) {
+            // Convert Excel serial date
+            const excelEpoch = new Date(1899, 11, 30);
+            const ms = Number(dateVal) * 24 * 60 * 60 * 1000;
+            const dateObj = new Date(excelEpoch.getTime() + ms);
+            const y = dateObj.getFullYear();
+            const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+            const d = String(dateObj.getDate()).padStart(2, "0");
+            dateVal = `${y}-${m}-${d}`;
+          } else if (dateVal) {
+            try {
+              const normalized = dateVal.replace(/[\/\.]/g, "-");
+              const dateObj = new Date(normalized);
+              if (!isNaN(dateObj.getTime())) {
+                const y = dateObj.getFullYear();
+                const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+                const d = String(dateObj.getDate()).padStart(2, "0");
+                dateVal = `${y}-${m}-${d}`;
+              }
+            } catch (_) {}
+          }
+
+          if (!dateVal) {
+            const today = new Date();
+            const y = today.getFullYear();
+            const m = String(today.getMonth() + 1).padStart(2, "0");
+            const d = String(today.getDate()).padStart(2, "0");
+            dateVal = `${y}-${m}-${d}`;
+          }
+
+          let startTime = getVal(["開始時間", "開始時刻", "開始", "StartTime", "Start"]);
+          let endTime = getVal(["終了時間", "終了時刻", "終了", "EndTime", "End"]);
+
+          // Time formatting check & normalizations
+          const formatTime = (t: string, fallback: string) => {
+            if (!t) return fallback;
+            // Handle raw number like 0.416666666666667 (Excel fraction for 10:00) or 1000 (meaning 10:00)
+            if (/^\d+(\.\d+)?$/.test(t)) {
+              const num = Number(t);
+              if (num < 1) {
+                // fraction of day
+                const totalMinutes = Math.round(num * 24 * 60);
+                const h = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
+                const m = (totalMinutes % 60).toString().padStart(2, "0");
+                return `${h}:${m}`;
+              }
+            }
+            // Check HH:MM structure
+            if (/^\d{1,2}:\d{2}$/.test(t)) {
+              const [h, m] = t.split(":");
+              return `${h.padStart(2, "0")}:${m}`;
+            }
+            return fallback;
+          };
+
+          startTime = formatTime(startTime, "10:00");
+          endTime = formatTime(endTime, "11:00");
+
+          const statusStr = getVal(["進捗状況", "ステータス", "状況", "Status", "進捗"]);
+          let status: ItemStatus = "not_started";
+          let progress = 0;
+          if (statusStr.includes("完了") || statusStr.toLowerCase() === "completed" || statusStr === "100") {
+            status = "completed";
+            progress = 100;
+          } else if (statusStr.includes("進行中") || statusStr.toLowerCase() === "in_progress" || statusStr === "50") {
+            status = "in_progress";
+            progress = 50;
+          }
+
+          const instructor = getVal(["教育担当者名", "担当者", "指導員", "Instructor", "担当", "指導者", "指導教員"]);
+          const description = getVal(["研修・指導内容", "指導内容", "詳細", "Description", "研修内容", "教育内容", "指導内容等"]);
+          const understandingCheck = getVal(["理解度・振り返り", "理解度チェック", "振り返り", "UnderstandingCheck", "振り返りチェック"]);
+
+          return {
+            title,
+            category,
+            date: dateVal,
+            startTime,
+            endTime,
+            status,
+            progress,
+            instructor,
+            description,
+            understandingCheck,
+          };
+        }).filter(item => item.title && item.title.trim() !== "");
+
+        resolve(items);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error("ファイルの読み取りに失敗しました。"));
+    reader.readAsBinaryString(file);
+  });
+}
